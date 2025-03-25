@@ -7,9 +7,6 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 
-# API kladi idi 7794333160:AAGHb9g_puZmiDaWjluREUmmR7trsjY5wZY
-
-
 # Файл базы данных
 DATABASE = 'teamy_bot.db'
 
