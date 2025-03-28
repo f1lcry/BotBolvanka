@@ -37,17 +37,19 @@ def init_db():
             premium_count INTEGER DEFAULT 0,
             agree_count INTEGER DEFAULT 0,
             settings_count INTEGER DEFAULT 0,
-            ai_count INTEGER DEFAULT 0
-            )
-        ''')
+            ai_count INTEGER DEFAULT 0,
+            added_in_group INTEGER DEFAULT 0
+        )
+    ''')
     conn.commit()
     conn.close()
 
 
 def fetch_user_data(export=False):
+    """Извлекает данные из таблицы users.
+       Если export=True, данные сохраняются в файл users_data.csv."""
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
-    # Выбираем все данные из таблицы users
     cursor.execute("SELECT * FROM users")
     rows = cursor.fetchall()
     conn.close()
@@ -58,7 +60,7 @@ def fetch_user_data(export=False):
                 'user_id', 'start_count', 'analyze_team_count', 'analyze_team_roles_count',
                 'analyze_for_all_count', 'analyze_for_me_count', 'summarize_full_count',
                 'summarize_min_count', 'tz_count', 'premium_count', 'agree_count',
-                'settings_count', 'ai_count'
+                'settings_count', 'ai_count', 'added_in_group'
             ])
             writer.writerows(rows)
     return rows
@@ -66,7 +68,6 @@ def fetch_user_data(export=False):
 
 def log_command(user_id: int, command: str):
     """Логирует вызов команды для пользователя в базу данных."""
-    # Словарь сопоставления команды с названием столбца
     command_to_column = {
         '/start': 'start_count',
         '/analyze_team': 'analyze_team_count',
@@ -83,21 +84,39 @@ def log_command(user_id: int, command: str):
     }
     conn = sqlite3.connect(DATABASE)
     c = conn.cursor()
-    # Если пользователь отсутствует, добавляем его
     c.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
     if c.fetchone() is None:
         c.execute('''
             INSERT INTO users (
                 user_id, start_count, analyze_team_count, analyze_team_roles_count, analyze_for_all_count,
                 analyze_for_me_count, summarize_full_count, summarize_min_count, tz_count,
-                premium_count, agree_count, settings_count, ai_count
+                premium_count, agree_count, settings_count, ai_count, added_in_group
             )
-            VALUES (?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            VALUES (?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         ''', (user_id,))
-    # Обновляем счетчик для соответствующей команды
     if command in command_to_column:
         column = command_to_column[command]
         c.execute(f"UPDATE users SET {column} = {column} + 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def mark_user_added_in_group(user_id: int):
+    """Обновляет или создаёт запись о том, что пользователь добавил бота в групповой чат."""
+    conn = sqlite3.connect(DATABASE)
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    if c.fetchone() is None:
+        c.execute('''
+            INSERT INTO users (
+                user_id, start_count, analyze_team_count, analyze_team_roles_count, analyze_for_all_count,
+                analyze_for_me_count, summarize_full_count, summarize_min_count, tz_count,
+                premium_count, agree_count, settings_count, ai_count, added_in_group
+            )
+            VALUES (?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+        ''', (user_id,))
+    else:
+        c.execute("UPDATE users SET added_in_group = added_in_group + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
@@ -132,9 +151,7 @@ def start_command(update: Update, context: CallbackContext) -> None:
             "/summarize_full - Получить выжимку переписки с акцентом на детали и ваши задачи\n"
             "/summarize_min - Получить сжатый обзор последних сообщений чата\n"
             "/tz - Составить структурированное техническое задания (ТЗ)\n"
-            "Саммари ГС - Получить выжимку из длинного голосового сообщения\n\n"
-            "Добавь меня в чат вашей команды и получи БЕСПЛАТНО "
-            "Подписку на 7 дней и 9 запросов для каждого участника чата!"
+            "Саммари ГС - Получить выжимку из длинного голосового сообщения"
         )
         update.message.reply_text(text)
     # Логирование вызова команды
@@ -157,18 +174,19 @@ def new_chat_members(update: Update, context: CallbackContext) -> None:
     """Обработчик для события добавления бота в группу."""
     for new_member in update.message.new_chat_members:
         if new_member.id == context.bot.id:
+            # Если кто-то добавил бота, то update.message.from_user — это пользователь, который его добавил.
+            if update.message.from_user:
+                mark_user_added_in_group(update.message.from_user.id)
             text = (
                 "👋 Привет! Я - бот Teamy - создан для повышения эффективности командной работы:\n\n"
                 "/analyze_team - оценить общий уровень командной работы\n" 
                 "/analyze_team_roles - узнать роль каждого участника\n" 
-                "/analyze_for_all  -  Оценить навыки командной работы каждого участника\n" 
-                "/analyze_for_me - Оценить ваши личные навыки командной работы\n"
-                "/summarize_full - Получить выжимку переписки с акцентом на детали и ваши задачи\n"
-                "/summarize_min - Получить сжатый обзор последних сообщений чата\n"
-                "/tz - Составить структурированное техническое задания (ТЗ)\n"
-                "Саммари ГС - Получить выжимку из длинного голосового сообщения\n\n"
-                "Добавь меня в чат вашей команды и получи БЕСПЛАТНО "
-                "Подписку на 7 дней и 9 запросов для каждого участника чата!"
+                "/analyze_for_all  - оценить навыки командной работы каждого участника\n" 
+                "/analyze_for_me - оценить ваши личные навыки командной работы\n"
+                "/summarize_full - получить выжимку переписки с акцентом на детали и ваши задачи\n"
+                "/summarize_min - получить сжатый обзор последних сообщений чата\n"
+                "/tz - составить структурированное техническое задание (ТЗ)\n"
+                "Саммари ГС - получить выжимку из длинного голосового сообщения"
             )
             update.message.reply_text(text)
             break
